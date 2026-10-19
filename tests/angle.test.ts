@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { MAX_PADDLE_BOUNCE_DEG, paddleBounceAngleDeg, paddleBounceVelocity } from "../src/systems/angle";
+import {
+  MAX_PADDLE_BOUNCE_DEG,
+  enforceMinVertical,
+  paddleBounceAngleDeg,
+  paddleBounceVelocity,
+} from "../src/systems/angle";
 
 describe("paddleBounceAngleDeg", () => {
   it("sends it straight up when hit dead center", () => {
@@ -52,5 +57,51 @@ describe("paddleBounceVelocity", () => {
     const { vx, vy } = paddleBounceVelocity(1, 400);
     const angleFromVertical = Math.abs(Math.atan2(vx, -vy));
     expect(angleFromVertical).toBeLessThanOrEqual((MAX_PADDLE_BOUNCE_DEG * Math.PI) / 180 + 1e-9);
+  });
+});
+
+describe("enforceMinVertical", () => {
+  const SPEED = 380;
+  const MIN_VY = 110;
+
+  it("leaves already-steep velocities at full magnitude", () => {
+    const v = enforceMinVertical(100, -360, SPEED, MIN_VY);
+    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
+    expect(v.vy).toBeLessThan(0);
+  });
+
+  it("steepens a near-horizontal ball to the minimum vertical speed", () => {
+    const v = enforceMinVertical(379, 10, SPEED, MIN_VY);
+    expect(Math.abs(v.vy)).toBeGreaterThanOrEqual(MIN_VY - 1e-9);
+    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
+    expect(v.vx).toBeGreaterThan(0); // keeps moving right
+    expect(v.vy).toBeGreaterThan(0); // keeps moving down
+  });
+
+  it("preserves direction signs when steepening", () => {
+    const v = enforceMinVertical(-300, -50, SPEED, MIN_VY);
+    expect(v.vx).toBeLessThan(0);
+    expect(v.vy).toBeLessThan(0);
+  });
+
+  it("pushes a horizontal ball downward (back toward the paddle)", () => {
+    const v = enforceMinVertical(380, 0, SPEED, MIN_VY);
+    expect(v.vy).toBe(MIN_VY);
+    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
+  });
+
+  it("normalizes an over-fast vector back down to speed", () => {
+    const v = enforceMinVertical(600, 600, SPEED, MIN_VY);
+    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
+  });
+
+  it("normalizes an under-fast vector back up to speed (no stuck-slow balls)", () => {
+    const v = enforceMinVertical(50, 30, SPEED, MIN_VY);
+    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
+    expect(Math.abs(v.vy)).toBeGreaterThanOrEqual(MIN_VY - 1e-9);
+  });
+
+  it("returns tiny/zero vectors untouched (pre-launch state)", () => {
+    expect(enforceMinVertical(0, 0, SPEED, MIN_VY)).toEqual({ vx: 0, vy: 0 });
   });
 });

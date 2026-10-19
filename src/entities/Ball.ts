@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { BALL, PADDLE } from "../config";
-import { paddleBounceVelocity } from "../systems/angle";
+import { enforceMinVertical, paddleBounceVelocity } from "../systems/angle";
 
 /**
  * The ball. Keeps its own logical speed (target magnitude); the actual body
@@ -12,6 +12,8 @@ export class Ball extends Phaser.Physics.Arcade.Image {
   public speed: number = BALL.SPEED_START;
   /** True while sitting on the paddle pre-launch. */
   public onPaddle = false;
+  /** Last non-zero travel direction — used to self-heal zeroed velocities. */
+  private lastDir = new Phaser.Math.Vector2(0, -1);
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, "ball");
@@ -38,6 +40,7 @@ export class Ball extends Phaser.Physics.Arcade.Image {
   launch(offset: number): void {
     const v = paddleBounceVelocity(offset, this.speed);
     this.setVelocity(v.vx, v.vy);
+    this.lastDir.set(v.vx, v.vy).normalize();
     this.onPaddle = false;
   }
 
@@ -46,6 +49,7 @@ export class Ball extends Phaser.Physics.Arcade.Image {
     this.speed = Math.min(BALL.SPEED_MAX, this.speed + BALL.SPEED_INC);
     const v = paddleBounceVelocity(hitOffset, this.speed);
     this.setVelocity(v.vx, v.vy);
+    this.lastDir.set(v.vx, v.vy).normalize();
   }
 
   /** Splits off at ±angleDeg from the current direction (used by multiball). */
@@ -59,19 +63,24 @@ export class Ball extends Phaser.Physics.Arcade.Image {
   }
 
   /**
-   * Re-normalizes velocity magnitude to `speed` (× slowFactor) and nudges
-   * nearly-horizontal trajectories back into play.
+   * Re-normalizes velocity magnitude to `speed` (× slowFactor), steepens
+   * nearly-horizontal trajectories so the ball can never crawl sideways, and
+   * self-heals a zeroed velocity (deep overlap can stop the body) by reusing
+   * the last travel direction.
    */
   syncVelocity(slowFactor: number): void {
     if (this.onPaddle) return;
     const body = this.body as Phaser.Physics.Arcade.Body;
-    if (body.velocity.length() < 1) return;
+    const v = body.velocity;
+    const target = this.speed * slowFactor;
 
-    let vy = body.velocity.y;
-    if (Math.abs(vy) < BALL.MIN_VERTICAL) {
-      vy = Math.sign(vy || 1) * BALL.MIN_VERTICAL;
+    if (v.length() < 1) {
+      this.setVelocity(this.lastDir.x * target, this.lastDir.y * target);
+      return;
     }
-    const angle = Math.atan2(vy, body.velocity.x);
-    this.setVelocity(Math.cos(angle) * this.speed * slowFactor, Math.sin(angle) * this.speed * slowFactor);
+
+    this.lastDir.copy(v).normalize();
+    const out = enforceMinVertical(v.x, v.y, target, BALL.MIN_VERTICAL);
+    this.setVelocity(out.vx, out.vy);
   }
 }

@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { BRICK, GAME, PADDLE, RULES } from "../config";
+import { BALL, BRICK, GAME, PADDLE, RULES } from "../config";
 import { ARMORED_HEX, NEON_HEX } from "../palette";
 import { Ball } from "../entities/Ball";
 import { Brick } from "../entities/Brick";
@@ -83,8 +83,16 @@ export class GameScene extends Phaser.Scene {
 
   private setupColliders(): void {
     // Numbers in callbacks follow the registration order: (obj1, obj2).
-    this.physics.add.collider(this.ballGroup, this.paddle, (ballObj, paddleObj) => {
-      this.onPaddleHit(ballObj as Ball, paddleObj as Paddle);
+    // OVERLAP, not collider: arcade separation gives up on deep overlaps (a
+    // paddle sweeping into the ball, or slow frames) and would never fire a
+    // collider callback — the ball would glide straight through. Overlap fires
+    // on any intersection; onPaddleHit handles the bounce manually.
+    // Note: Phaser hands group-vs-object callbacks in inconsistent order, so
+    // resolve the pair defensively.
+    this.physics.add.overlap(this.ballGroup, this.paddle, (a, b) => {
+      const ball = a instanceof Ball ? a : (b as Ball);
+      const paddle = a instanceof Ball ? (b as Paddle) : (a as Paddle);
+      this.onPaddleHit(ball, paddle);
     });
     this.physics.add.collider(this.ballGroup, this.brickGroup, (ballObj, brickObj) => {
       this.onBrickHit(ballObj as Ball, brickObj as Brick);
@@ -155,10 +163,21 @@ export class GameScene extends Phaser.Scene {
 
   private onPaddleHit(ball: Ball, paddle: Paddle): void {
     if (ball.onPaddle) return;
-    const body = ball.body as Phaser.Physics.Arcade.Body;
-    if (body.velocity.y <= 0) return; // already moving up — ignore contact
+    // Phaser's auto-bounce has already flipped vy by the time this callback
+    // runs, so a velocity check can't tell top hits from side hits — use
+    // position instead. Side/below hits keep the plain physics reflection.
+    if (ball.y >= paddle.y) return;
 
+    // Controlled bounce: angle from hit position, speed ramps up.
     ball.bounceOffPaddle(paddle.hitOffsetFor(ball.x));
+
+    // Snap the ball cleanly above the paddle surface. A moving paddle can
+    // sweep into the ball deeply enough that physics separation gives up and
+    // zeroes the velocity (the ball "skids off"); repositioning guarantees a
+    // clean exit every frame.
+    const paddleBody = paddle.body as Phaser.Physics.Arcade.Body;
+    ball.setPosition(ball.x, paddleBody.top - BALL.RADIUS - 1);
+
     audio.paddle();
 
     // Squash-and-stretch pulse on the paddle.
@@ -315,7 +334,9 @@ export class GameScene extends Phaser.Scene {
       if (ball.y > GAME.H + 40) {
         this.balls.splice(i, 1);
         ball.destroy();
-        if (this.balls.length === 0) this.loseLife();
+        // Only cost a life during active play — not while a level-clear or
+        // game-over overlay is up.
+        if (this.state === "playing" && this.balls.length === 0) this.loseLife();
       }
     }
   }
@@ -339,6 +360,8 @@ export class GameScene extends Phaser.Scene {
       this.gameOver();
       return;
     }
+    // Back to "ready" so Space can launch the fresh ball (fixes the softlock).
+    this.state = "ready";
     this.spawnBall();
   }
 
