@@ -121,7 +121,8 @@ export class HudScene extends Phaser.Scene {
 
       let bar = this.bars.get(type);
       if (!bar) {
-        const y = 18 + i * (BAR_H + 22);
+        // Below the score readout (which occupies y 12-38) so they don't overlap.
+        const y = 54 + i * (BAR_H + 22);
         const x = 24;
         const frame = this.add.rectangle(x, y, BAR_W, BAR_H, 0x151a30).setOrigin(0);
         const fill = this.add.rectangle(x, y, 1, BAR_H - 2, NEON_COLOR(type)).setOrigin(0);

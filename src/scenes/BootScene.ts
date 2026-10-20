@@ -68,11 +68,16 @@ export class BootScene extends Phaser.Scene {
   private makePaddleTextures(): void {
     const drawPaddle = (g: Phaser.GameObjects.Graphics, w: number) => {
       const h = PADDLE.H;
-      g.fillStyle(0x17213a, 1);
+      // Solid bar: fill the whole paddle body, not just the outline.
+      g.fillStyle(0x8de1ff, 1);
       g.fillRoundedRect(2, 2, w - 4, h - 4, 7);
+      g.fillStyle(0x5bb8d8, 1);
+      g.fillRoundedRect(2, h / 2, w - 4, h / 2 - 2, { tl: 0, tr: 0, bl: 7, br: 7 });
+      g.fillStyle(0xe6f9ff, 0.9);
+      g.fillRect(8, 3, w - 16, 2);
       g.lineStyle(2, 0x8de1ff, 0.85);
       g.strokeRoundedRect(2, 2, w - 4, h - 4, 7);
-      g.fillStyle(0x8de1ff, 1);
+      g.fillStyle(0x17213a, 1);
       g.fillRoundedRect(w / 2 - 22, h / 2 - 2, 44, 4, 2);
       g.lineStyle(2, 0x8de1ff, 0.3);
       g.strokeRoundedRect(0, 0, w, h, 8);

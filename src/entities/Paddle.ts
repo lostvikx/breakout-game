@@ -32,9 +32,14 @@ export class Paddle extends Phaser.Physics.Arcade.Image {
     body.setSize(w, PADDLE.H);
   }
 
+  /** Logical width used for collision, unaffected by cosmetic squash tweens. */
+  physicsWidth(): number {
+    return this.wide ? PADDLE.WIDE : PADDLE.W;
+  }
+
   /** Full-width hit position of a ball relative to the paddle center, in -1..1. */
   hitOffsetFor(ballX: number): number {
-    const halfW = this.displayWidth / 2;
+    const halfW = this.physicsWidth() / 2;
     return Phaser.Math.Clamp((ballX - this.x) / (halfW || 1), -1, 1);
   }
 }

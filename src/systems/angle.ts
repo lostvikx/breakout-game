@@ -1,12 +1,14 @@
 /**
- * Paddle bounce math. Pure module — no Phaser imports so it can be unit tested.
+ * Paddle bounce math and direction clamping. Pure module — no Phaser imports
+ * so it can be unit tested.
  *
  * Classic breakout feel: the ball's outgoing angle depends on where it hit the
- * paddle. Hitting the center sends it straight up; edges angle it outwards,
- * clamped so trajectories stay playable.
+ * paddle. Hitting the center sends it straight up; edges angle it outwards.
+ * Angles are measured from vertical and clamped well short of horizontal so the
+ * ball never crawls sideways across the screen.
  */
 
-export const MAX_PADDLE_BOUNCE_DEG = 75;
+export const MAX_PADDLE_BOUNCE_DEG = 60;
 
 export function clamp01(value: number): number {
   if (Number.isNaN(value)) return 0;
@@ -41,22 +43,27 @@ export function paddleBounceVelocity(offset: number, speed: number): Velocity {
 }
 
 /**
- * Normalizes a velocity to exactly `speed` and steepens it so the vertical
- * component is at least `minVertical`. Sign of both components is preserved
- * (an exactly-zero component defaults to positive — down/right).
- *
- * This is what stops the ball from skimming sideways across the paddle.
+ * Normalizes a direction and clamps it to `maxAngleDeg` away from vertical,
+ * preserving the sign of each component. Used when multiball splits a ball so
+ * clones can never end up travelling almost horizontally.
  */
-export function enforceMinVertical(vx: number, vy: number, speed: number, minVertical: number): Velocity {
+export function clampDirection(
+  vx: number,
+  vy: number,
+  maxAngleDeg: number = MAX_PADDLE_BOUNCE_DEG,
+): Velocity {
   const mag = Math.hypot(vx, vy);
-  if (mag < 1) return { vx, vy };
+  if (mag < 1e-6) return { vx: 0, vy: -1 };
 
-  let outVx = (vx / mag) * speed;
-  let outVy = (vy / mag) * speed;
+  const ux = vx / mag;
+  const uy = vy / mag;
+  const angleFromVertical = Math.atan2(Math.abs(ux), Math.abs(uy));
+  const max = (maxAngleDeg * Math.PI) / 180;
 
-  if (Math.abs(outVy) < minVertical) {
-    outVy = (Math.sign(outVy) || 1) * minVertical;
-    outVx = (Math.sign(outVx) || 1) * Math.sqrt(Math.max(0, speed * speed - minVertical * minVertical));
-  }
-  return { vx: outVx, vy: outVy };
+  if (angleFromVertical <= max) return { vx: ux, vy: uy };
+
+  return {
+    vx: (Math.sign(ux) || 1) * Math.sin(max),
+    vy: (Math.sign(uy) || 1) * Math.cos(max),
+  };
 }

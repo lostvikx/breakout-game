@@ -8,6 +8,7 @@ import { LEVELS } from "../levels";
 import { audio } from "../systems/audio";
 import { parseLevel } from "../systems/levelLoader";
 import { EffectTracker, POWERUP_DURATIONS, pickPowerUp, shouldDrop, type PowerUpType } from "../systems/powerups";
+import { resolveCircleRect } from "../systems/collision";
 
 type GameState = "ready" | "playing" | "clearing" | "won" | "over";
 
@@ -18,7 +19,6 @@ type GameState = "ready" | "playing" | "clearing" | "won" | "over";
 export class GameScene extends Phaser.Scene {
   private paddle!: Paddle;
   private balls: Ball[] = [];
-  private ballGroup!: Phaser.Physics.Arcade.Group;
   private brickGroup!: Phaser.Physics.Arcade.StaticGroup;
   private capsuleGroup!: Phaser.Physics.Arcade.Group;
 
@@ -47,13 +47,15 @@ export class GameScene extends Phaser.Scene {
     this.state = "ready";
     this.effects.clear();
     this.balls = [];
+    // The previous run's emitters are destroyed on shutdown; drop the stale
+    // references or the first burst after a restart explodes a dead emitter.
+    this.burstEmitters.clear();
 
     // Bounce off top/left/right walls; the bottom is open (losing the ball).
     this.physics.world.setBoundsCollision(true, true, true, false);
 
     this.buildPlayfield();
     this.paddle = new Paddle(this, GAME.W / 2, PADDLE.Y);
-    this.ballGroup = this.physics.add.group();
     this.brickGroup = this.physics.add.staticGroup();
     this.capsuleGroup = this.physics.add.group();
 
@@ -82,23 +84,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setupColliders(): void {
-    // Numbers in callbacks follow the registration order: (obj1, obj2).
-    // OVERLAP, not collider: arcade separation gives up on deep overlaps (a
-    // paddle sweeping into the ball, or slow frames) and would never fire a
-    // collider callback — the ball would glide straight through. Overlap fires
-    // on any intersection; onPaddleHit handles the bounce manually.
-    // Note: Phaser hands group-vs-object callbacks in inconsistent order, so
-    // resolve the pair defensively.
-    this.physics.add.overlap(this.ballGroup, this.paddle, (a, b) => {
-      const ball = a instanceof Ball ? a : (b as Ball);
-      const paddle = a instanceof Ball ? (b as Paddle) : (a as Paddle);
-      this.onPaddleHit(ball, paddle);
-    });
-    this.physics.add.collider(this.ballGroup, this.brickGroup, (ballObj, brickObj) => {
-      this.onBrickHit(ballObj as Ball, brickObj as Brick);
-    });
-    // Capsules bounce off bricks on the way down (an extra bit of chaos).
-    this.physics.add.collider(this.capsuleGroup, this.brickGroup);
+    // The ball is moved manually (see updateBalls), so only the paddle and
+    // capsules use Arcade Physics here.
     // Instead of a hard bounce, catching capsules uses overlap.
     this.physics.add.overlap(this.paddle, this.capsuleGroup, (paddleObj, capObj) => {
       this.collectCapsule(
@@ -139,7 +126,6 @@ export class GameScene extends Phaser.Scene {
   private spawnBall(): void {
     const ball = new Ball(this, this.paddle.x, PADDLE.Y - 20);
     ball.stickTo(this.paddle.x);
-    this.ballGroup.add(ball);
     this.balls.push(ball);
     this.addBallTrail(ball);
   }
@@ -161,31 +147,69 @@ export class GameScene extends Phaser.Scene {
 
   // --- collisions ------------------------------------------------------------------
 
-  private onPaddleHit(ball: Ball, paddle: Paddle): void {
-    if (ball.onPaddle) return;
-    // Phaser's auto-bounce has already flipped vy by the time this callback
-    // runs, so a velocity check can't tell top hits from side hits — use
-    // position instead. Side/below hits keep the plain physics reflection.
-    if (ball.y >= paddle.y) return;
+  /** Resolves the ball against one brick (shallowest axis wins). */
+  private handleBrickCollision(ball: Ball): void {
+    const bricks = this.brickGroup.getChildren() as Brick[];
+    for (const brick of bricks) {
+      if (!brick.active) continue;
+      const bounds = brick.getBounds();
+      const hit = resolveCircleRect(ball.x, ball.y, BALL.RADIUS, {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+      });
+      if (!hit) continue;
+
+      if (hit.axis === "x") {
+        ball.x += hit.sign * hit.depth;
+        ball.reflectX(hit.sign);
+      } else {
+        ball.y += hit.sign * hit.depth;
+        ball.reflectY(hit.sign);
+      }
+      this.onBrickHit(brick);
+      return; // one brick per sub-step; the next step handles any neighbour
+    }
+  }
+
+  /**
+   * Only a descending ball that reaches the paddle's top surface bounces.
+   * Once it is below the paddle it has been missed and falls out.
+   */
+  private handlePaddleCollision(ball: Ball): void {
+    if (ball.onPaddle || ball.vy <= 0) return;
+
+    const halfW = this.paddle.physicsWidth() / 2;
+    const top = PADDLE.Y - PADDLE.H / 2;
+    const bottom = PADDLE.Y + PADDLE.H / 2;
+
+    if (ball.y + BALL.RADIUS < top) return;
+    if (ball.y - BALL.RADIUS > bottom) return;
+    if (ball.y > PADDLE.Y) return; // already past the paddle's centre
+    if (Math.abs(ball.x - this.paddle.x) > halfW + BALL.RADIUS) return;
 
     // Controlled bounce: angle from hit position, speed ramps up.
-    ball.bounceOffPaddle(paddle.hitOffsetFor(ball.x));
+    ball.bounceOffPaddle(this.paddle.hitOffsetFor(ball.x));
 
-    // Snap the ball cleanly above the paddle surface. A moving paddle can
-    // sweep into the ball deeply enough that physics separation gives up and
-    // zeroes the velocity (the ball "skids off"); repositioning guarantees a
-    // clean exit every frame.
-    const paddleBody = paddle.body as Phaser.Physics.Arcade.Body;
-    ball.setPosition(ball.x, paddleBody.top - BALL.RADIUS - 1);
+    // Snap cleanly above the paddle surface so the next sub-step can't re-hit it.
+    ball.y = top - BALL.RADIUS - 1;
 
     audio.paddle();
 
     // Squash-and-stretch pulse on the paddle.
-    paddle.setScale(1.05, 1.1);
-    this.tweens.add({ targets: paddle, scaleX: 1, scaleY: 1, duration: 130, ease: "Quad.easeOut" });
+    this.paddle.setScale(1.05, 1.1);
+    this.tweens.add({
+      targets: this.paddle,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 130,
+      ease: "Quad.easeOut",
+    });
   }
 
-  private onBrickHit(_ball: Ball, brick: Brick): void {
+  private onBrickHit(brick: Brick): void {
+    if (!brick.active) return; // another ball already destroyed it this step
     const result = brick.hit();
     const cx = brick.x;
     const cy = brick.y;
@@ -278,7 +302,6 @@ export class GameScene extends Phaser.Scene {
     if (!source) return;
     for (const angleDeg of [26, -26]) {
       const clone = source.cloneAtAngle(this, angleDeg);
-      this.ballGroup.add(clone);
       this.balls.push(clone);
       this.addBallTrail(clone);
     }
@@ -286,11 +309,11 @@ export class GameScene extends Phaser.Scene {
 
   // --- update loop -------------------------------------------------------------------
 
-  update(_time: number, _delta: number): void {
+  update(_time: number, delta: number): void {
     const now = this.time.now;
 
     this.updatePaddle();
-    this.updateBalls();
+    this.updateBalls(delta);
     this.updateCapsules();
 
     for (const expired of this.effects.expire(now)) {
@@ -324,14 +347,26 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private updateBalls(): void {
+  private updateBalls(deltaMs: number): void {
     const slowFactor = this.effects.isActive("slow", this.time.now) ? 0.65 : 1;
+
+    // Fixed sub-steps keep the ball from tunnelling through a paddle or brick
+    // on long frames. At max speed a sub-step moves well under one pixel.
+    const dt = Math.min(deltaMs, 50) / 1000;
+    const MAX_STEP = 1 / 240;
+    for (let remaining = dt; remaining > 0; remaining -= MAX_STEP) {
+      const step = Math.min(MAX_STEP, remaining);
+      for (const ball of this.balls) {
+        ball.advance(step, slowFactor);
+        this.handleBrickCollision(ball);
+        this.handlePaddleCollision(ball);
+      }
+    }
 
     for (let i = this.balls.length - 1; i >= 0; i--) {
       const ball = this.balls[i];
-      if (!ball.onPaddle) ball.syncVelocity(slowFactor);
-
-      if (ball.y > GAME.H + 40) {
+      // The bottom is open: falling out is the only loss condition.
+      if (ball.y - BALL.RADIUS > GAME.H) {
         this.balls.splice(i, 1);
         ball.destroy();
         // Only cost a life during active play — not while a level-clear or
@@ -373,6 +408,7 @@ export class GameScene extends Phaser.Scene {
     const isLast = this.levelIndex >= LEVELS.length - 1;
     const message = isLast ? "ALL LEVELS CLEARED!" : `LEVEL ${this.levelIndex + 1} CLEARED!`;
     this.showOverlay(message, isLast ? 0x7cff6b : 0x00e5ff, isLast);
+    if (isLast) this.saveHighScore();
 
     this.time.delayedCall(2200, () => {
       if (isLast) {
@@ -392,12 +428,16 @@ export class GameScene extends Phaser.Scene {
   private gameOver(): void {
     this.state = "over";
     audio.gameOver();
+    this.saveHighScore();
+    this.showOverlay("GAME OVER", 0xff2fb3, false);
+    this.promptReplay();
+  }
+
+  private saveHighScore(): void {
     const best = Number(localStorage.getItem("breakout_highscore") ?? 0);
     if (this.score > best) {
       localStorage.setItem("breakout_highscore", String(this.score));
     }
-    this.showOverlay("GAME OVER", 0xff2fb3, false);
-    this.promptReplay();
   }
 
   private clearField(): void {

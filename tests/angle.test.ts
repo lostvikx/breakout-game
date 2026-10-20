@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_PADDLE_BOUNCE_DEG,
-  enforceMinVertical,
+  clampDirection,
   paddleBounceAngleDeg,
   paddleBounceVelocity,
 } from "../src/systems/angle";
@@ -53,55 +53,35 @@ describe("paddleBounceVelocity", () => {
     expect(vy).toBeCloseTo(-400, 5);
   });
 
-  it("never goes steeper than the clamp allows (75 deg from vertical)", () => {
+  it("never goes steeper than the clamp allows", () => {
     const { vx, vy } = paddleBounceVelocity(1, 400);
     const angleFromVertical = Math.abs(Math.atan2(vx, -vy));
     expect(angleFromVertical).toBeLessThanOrEqual((MAX_PADDLE_BOUNCE_DEG * Math.PI) / 180 + 1e-9);
   });
 });
 
-describe("enforceMinVertical", () => {
-  const SPEED = 380;
-  const MIN_VY = 110;
-
-  it("leaves already-steep velocities at full magnitude", () => {
-    const v = enforceMinVertical(100, -360, SPEED, MIN_VY);
-    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
+describe("clampDirection", () => {
+  it("returns a unit vector unchanged when within the limit", () => {
+    const v = clampDirection(1, -1);
+    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(1, 6);
+    expect(v.vx).toBeGreaterThan(0);
     expect(v.vy).toBeLessThan(0);
   });
 
-  it("steepens a near-horizontal ball to the minimum vertical speed", () => {
-    const v = enforceMinVertical(379, 10, SPEED, MIN_VY);
-    expect(Math.abs(v.vy)).toBeGreaterThanOrEqual(MIN_VY - 1e-9);
-    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
-    expect(v.vx).toBeGreaterThan(0); // keeps moving right
-    expect(v.vy).toBeGreaterThan(0); // keeps moving down
+  it("steepens a near-horizontal direction to the angle limit", () => {
+    const v = clampDirection(10, -1);
+    const angleFromVertical = Math.atan2(Math.abs(v.vx), Math.abs(v.vy));
+    expect(angleFromVertical).toBeCloseTo((MAX_PADDLE_BOUNCE_DEG * Math.PI) / 180, 6);
+    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(1, 6);
   });
 
-  it("preserves direction signs when steepening", () => {
-    const v = enforceMinVertical(-300, -50, SPEED, MIN_VY);
+  it("preserves the sign of each component when clamping", () => {
+    const v = clampDirection(-10, -1);
     expect(v.vx).toBeLessThan(0);
     expect(v.vy).toBeLessThan(0);
   });
 
-  it("pushes a horizontal ball downward (back toward the paddle)", () => {
-    const v = enforceMinVertical(380, 0, SPEED, MIN_VY);
-    expect(v.vy).toBe(MIN_VY);
-    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
-  });
-
-  it("normalizes an over-fast vector back down to speed", () => {
-    const v = enforceMinVertical(600, 600, SPEED, MIN_VY);
-    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
-  });
-
-  it("normalizes an under-fast vector back up to speed (no stuck-slow balls)", () => {
-    const v = enforceMinVertical(50, 30, SPEED, MIN_VY);
-    expect(Math.hypot(v.vx, v.vy)).toBeCloseTo(SPEED, 5);
-    expect(Math.abs(v.vy)).toBeGreaterThanOrEqual(MIN_VY - 1e-9);
-  });
-
-  it("returns tiny/zero vectors untouched (pre-launch state)", () => {
-    expect(enforceMinVertical(0, 0, SPEED, MIN_VY)).toEqual({ vx: 0, vy: 0 });
+  it("falls back to straight up for a zero vector", () => {
+    expect(clampDirection(0, 0)).toEqual({ vx: 0, vy: -1 });
   });
 });

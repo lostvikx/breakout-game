@@ -1,46 +1,51 @@
 import Phaser from "phaser";
-import { BALL, PADDLE } from "../config";
-import { enforceMinVertical, paddleBounceVelocity } from "../systems/angle";
+import { BALL, GAME, PADDLE } from "../config";
+import { clampDirection, paddleBounceVelocity } from "../systems/angle";
 
 /**
- * The ball. Keeps its own logical speed (target magnitude); the actual body
- * velocity is re-synced from direction each frame so timers like slow-mo can
- * scale it globally without fighting collision response.
+ * The ball is moved manually instead of by Arcade Physics. That makes the
+ * behaviour fully deterministic: left/right/top walls are hard clamps, and the
+ * only way out of the playfield is past the paddle at the bottom.
+ *
+ * `dirX`/`dirY` is a unit vector; `speed` is the intended magnitude. Slow-mo
+ * scales movement at call time without mutating the logical speed.
  */
-export class Ball extends Phaser.Physics.Arcade.Image {
+export class Ball extends Phaser.GameObjects.Image {
   /** Logical target speed; ramps up with each paddle hit. */
   public speed: number = BALL.SPEED_START;
   /** True while sitting on the paddle pre-launch. */
   public onPaddle = false;
-  /** Last non-zero travel direction — used to self-heal zeroed velocities. */
-  private lastDir = new Phaser.Math.Vector2(0, -1);
+
+  private dirX = 0;
+  private dirY = -1;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, "ball");
     this.setOrigin(0.5, 0.5);
     scene.add.existing(this);
-    scene.physics.add.existing(this);
-    const body = this.body as Phaser.Physics.Arcade.Body;
-    body.setCircle(BALL.RADIUS, -BALL.RADIUS, -BALL.RADIUS);
-    body.setBounce(1, 1);
-    body.setCollideWorldBounds(true);
-    body.onWorldBounds = false;
+  }
+
+  get vx(): number {
+    return this.dirX * this.speed;
+  }
+
+  get vy(): number {
+    return this.dirY * this.speed;
   }
 
   /** Sticks to the paddle (pre-launch state). */
   stickTo(paddleX: number): void {
     this.onPaddle = true;
     this.speed = BALL.SPEED_START;
-    const body = this.body as Phaser.Physics.Arcade.Body;
-    body.reset(paddleX, PADDLE.Y - PADDLE.H / 2 - BALL.RADIUS - 2);
-    body.stop();
+    this.dirX = 0;
+    this.dirY = -1;
+    this.setPosition(paddleX, PADDLE.Y - PADDLE.H / 2 - BALL.RADIUS - 2);
   }
 
-  /** Launches from the paddle with a slight random-ish sideways offset (-1..1). */
+  /** Launches from the paddle with a slight sideways offset (-1..1). */
   launch(offset: number): void {
     const v = paddleBounceVelocity(offset, this.speed);
-    this.setVelocity(v.vx, v.vy);
-    this.lastDir.set(v.vx, v.vy).normalize();
+    this.setDirection(v.vx, v.vy);
     this.onPaddle = false;
   }
 
@@ -48,39 +53,59 @@ export class Ball extends Phaser.Physics.Arcade.Image {
   bounceOffPaddle(hitOffset: number): void {
     this.speed = Math.min(BALL.SPEED_MAX, this.speed + BALL.SPEED_INC);
     const v = paddleBounceVelocity(hitOffset, this.speed);
-    this.setVelocity(v.vx, v.vy);
-    this.lastDir.set(v.vx, v.vy).normalize();
+    this.setDirection(v.vx, v.vy);
   }
 
   /** Splits off at ±angleDeg from the current direction (used by multiball). */
   cloneAtAngle(scene: Phaser.Scene, angleDeg: number): Ball {
     const ball = new Ball(scene, this.x, this.y);
     ball.speed = this.speed;
-    const body = this.body as Phaser.Physics.Arcade.Body;
-    const angle = Math.atan2(body.velocity.y, body.velocity.x) + Phaser.Math.DegToRad(angleDeg);
-    ball.setVelocity(Math.cos(angle) * this.speed, Math.sin(angle) * this.speed);
+    const angle = Math.atan2(this.dirY, this.dirX) + Phaser.Math.DegToRad(angleDeg);
+    const dir = clampDirection(Math.cos(angle), Math.sin(angle));
+    ball.dirX = dir.vx;
+    ball.dirY = dir.vy;
     return ball;
   }
 
   /**
-   * Re-normalizes velocity magnitude to `speed` (× slowFactor), steepens
-   * nearly-horizontal trajectories so the ball can never crawl sideways, and
-   * self-heals a zeroed velocity (deep overlap can stop the body) by reusing
-   * the last travel direction.
+   * Moves one physics sub-step. Left, right and top are hard walls: the ball is
+   * clamped inside and the matching direction component is reflected. There is
+   * deliberately no bottom wall — falling out is a missed paddle.
    */
-  syncVelocity(slowFactor: number): void {
+  advance(dt: number, speedFactor: number): void {
     if (this.onPaddle) return;
-    const body = this.body as Phaser.Physics.Arcade.Body;
-    const v = body.velocity;
-    const target = this.speed * slowFactor;
 
-    if (v.length() < 1) {
-      this.setVelocity(this.lastDir.x * target, this.lastDir.y * target);
-      return;
+    const distance = this.speed * speedFactor * dt;
+    this.x += this.dirX * distance;
+    this.y += this.dirY * distance;
+
+    const r = BALL.RADIUS;
+    if (this.x - r < 0) {
+      this.x = r;
+      this.dirX = Math.abs(this.dirX);
+    } else if (this.x + r > GAME.W) {
+      this.x = GAME.W - r;
+      this.dirX = -Math.abs(this.dirX);
     }
+    if (this.y - r < 0) {
+      this.y = r;
+      this.dirY = Math.abs(this.dirY);
+    }
+  }
 
-    this.lastDir.copy(v).normalize();
-    const out = enforceMinVertical(v.x, v.y, target, BALL.MIN_VERTICAL);
-    this.setVelocity(out.vx, out.vy);
+  /** Reflects off a vertical surface; `sign` is the push direction (-1 left, +1 right). */
+  reflectX(sign: -1 | 1): void {
+    this.dirX = sign * Math.abs(this.dirX);
+  }
+
+  /** Reflects off a horizontal surface; `sign` is the push direction (-1 up, +1 down). */
+  reflectY(sign: -1 | 1): void {
+    this.dirY = sign * Math.abs(this.dirY);
+  }
+
+  private setDirection(vx: number, vy: number): void {
+    const mag = Math.hypot(vx, vy) || 1;
+    this.dirX = vx / mag;
+    this.dirY = vy / mag;
   }
 }
