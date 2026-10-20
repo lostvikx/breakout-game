@@ -65,7 +65,7 @@ export class TitleScene extends Phaser.Scene {
     });
 
     this.add
-      .text(width / 2, height * 0.62, "ARROWS or A / D to move    ·    SPACE to launch    ·    M to mute", {
+      .text(width / 2, height * 0.62, "ARROWS or A / D to move    ·    SPACE to launch    ·    ESC to pause    ·    M to mute", {
         fontFamily: '"Courier New", monospace',
         fontSize: "17px",
         color: "#8de1ff",

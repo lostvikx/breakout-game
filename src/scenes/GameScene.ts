@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { BALL, BRICK, GAME, PADDLE, RULES } from "../config";
+import { BALL, BRICK, CAPSULE, GAME, PADDLE, RULES } from "../config";
 import { ARMORED_HEX, NEON_HEX } from "../palette";
 import { Ball } from "../entities/Ball";
 import { Brick } from "../entities/Brick";
@@ -101,6 +101,14 @@ export class GameScene extends Phaser.Scene {
     this.keyA = kb.addKey(Phaser.Input.Keyboard.KeyCodes.A);
     this.keyD = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);
     this.space = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    kb.on("keydown-ESC", () => this.openPauseMenu());
+  }
+
+  private openPauseMenu(): void {
+    // Don't stack the menu on top of level-clear / game-over overlays.
+    if (this.state !== "ready" && this.state !== "playing") return;
+    this.scene.launch("pause");
+    this.scene.pause();
   }
 
   // --- level management ------------------------------------------------------------
@@ -264,10 +272,11 @@ export class GameScene extends Phaser.Scene {
       powerType: PowerUpType;
     };
     cap.powerType = type;
-    cap.setVelocity(Phaser.Math.Between(-30, 30), 140);
+    // Group defaults overwrite these, so they must be applied *after* add().
+    this.capsuleGroup.add(cap);
+    cap.setVelocity(Phaser.Math.Between(-CAPSULE.DRIFT, CAPSULE.DRIFT), CAPSULE.FALL_SPEED);
     cap.setBounce(1, 0);
     cap.setCollideWorldBounds(true);
-    this.capsuleGroup.add(cap);
     this.tweens.add({ targets: cap, angle: { from: -7, to: 7 }, duration: 480, yoyo: true, repeat: -1 });
   }
 

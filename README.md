@@ -23,6 +23,7 @@ npm run build      # type-check + production build → dist/
 |---|---|
 | ← / → or A / D | Move paddle |
 | SPACE | Launch ball / restart after game over |
+| ESC | Pause menu (resume / restart / quit) |
 | M | Mute |
 
 ## Game
@@ -34,7 +35,7 @@ npm run build      # type-check + production build → dist/
   extra life. Drops are visible in the HUD as timer bars.
 - **Juice** — particle bursts, ball trails, screen shake, CRT scanlines and
   vignette, squash-and-stretch on the paddle.
-- **3 lives**, high score persisted in `localStorage`.
+- **5 lives** (up to 8 with life pickups), high score persisted in `localStorage`.
 
 ## Highlights for the curious
 

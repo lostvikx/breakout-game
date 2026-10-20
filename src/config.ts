@@ -29,12 +29,17 @@ export const BALL = {
   SPEED_START: 380,
   SPEED_INC: 7,
   SPEED_MAX: 620,
-  /** Below this vertical speed the ball gets nudged so it never crawls sideways forever. */
-  MIN_VERTICAL: 110,
 } as const;
 
 export const RULES = {
-  LIVES_START: 3,
-  LIVES_MAX: 6,
+  LIVES_START: 5,
+  LIVES_MAX: 8,
   DROP_CHANCE: 0.12,
+} as const;
+
+export const CAPSULE = {
+  /** Downward speed of power-up capsules (px/s). */
+  FALL_SPEED: 200,
+  /** Maximum random horizontal drift (px/s). */
+  DRIFT: 30,
 } as const;

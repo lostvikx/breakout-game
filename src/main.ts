@@ -4,6 +4,7 @@ import { BootScene } from "./scenes/BootScene";
 import { TitleScene } from "./scenes/TitleScene";
 import { GameScene } from "./scenes/GameScene";
 import { HudScene } from "./scenes/HudScene";
+import { PauseScene } from "./scenes/PauseScene";
 import { audio } from "./systems/audio";
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -20,7 +21,7 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, TitleScene, GameScene, HudScene],
+  scene: [BootScene, TitleScene, GameScene, HudScene, PauseScene],
 };
 
 const game = new Phaser.Game(config);
